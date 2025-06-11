@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { SafeAreaView, StyleSheet, Platform, PermissionsAndroid, DeviceEventEmitter, Text, View } from 'react-native';
-import Beacons from 'react-native-beacons-manager';
-import { MiMapView } from '@mappedin/react-native-sdk';
-import { logMessage } from './logger';
+import { SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { MiMapView } from '@mappedin/react-native-sdk'; // Adjust import if needed
 
 // Mappedin venue options
 const venueOptions = {
@@ -11,14 +9,20 @@ const venueOptions = {
   clientSecret: 'RJyRXKcryCMy4erZqqCbuB1NbR66QTGNXVE0x3Pg6oCIlUR1',
 };
 
-// Define your known beacons and their physical coordinates (x, y) in meters
+// Fake beacons with x, y in meters (example)
 const BEACON_LOCATIONS = {
-  'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0:0:0': { x: 5, y: 10 },
-  'E2C56DB5-DFFB-48D2-B060-D0F5A71096E1:0:0': { x: 15, y: 10 },
-  'B9407F30-F5F8-466E-AFF9-25556B57FE6D:1:102': { x: 10, y: 20 },
+  beacon1: { x: 20, y: 10 },
+  beacon2: { x: 30, y: 10 },
+  beacon3: { x: 10, y: 20 },
 };
 
-// Trilateration math using three beacons
+// Helper: Convert fake meters to approximate lat/lng
+const convertToLatLng = (x, y) => ({
+  latitude: 43.86045771092588 + y * 0.00001,
+  longitude:-78.94244735432709 + (-x * 0.00001),
+});
+
+// Trilateration function for 3 beacons to estimate position
 function trilaterate(b1, b2, b3) {
   const { x: x1, y: y1, d: d1 } = b1;
   const { x: x2, y: y2, d: d2 } = b2;
@@ -32,7 +36,7 @@ function trilaterate(b1, b2, b3) {
   const F = d2 ** 2 - d3 ** 2 - x2 ** 2 + x3 ** 2 - y2 ** 2 + y3 ** 2;
 
   const denom = A * E - D * B;
-  if (denom === 0) return null;
+  if (denom === 0) return null; // In case of no solution
 
   const x = (C * E - F * B) / denom;
   const y = (A * F - C * D) / denom;
@@ -42,77 +46,59 @@ function trilaterate(b1, b2, b3) {
 const BlueDotWithBeacon = () => {
   const mapView = useRef(null);
   const [position, setPosition] = useState(null);
+  const [mapLoaded, setMapLoaded] = useState(false); // Track map loaded state
 
   useEffect(() => {
-    const startBeaconScan = async () => {
-      try {
-        if (Platform.OS === 'android') {
-          const granted = await PermissionsAndroid.requestMultiple([
-            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-            PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-            PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          ]);
-          if (
-            granted['android.permission.ACCESS_FINE_LOCATION'] !== PermissionsAndroid.RESULTS.GRANTED
-          ) {
-            logMessage('Location permission denied');
-            return;
-          }
-          Beacons.detectIBeacons();
-          Beacons.startRangingBeaconsInRegion('REGION1', 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0');
-        } else {
-          Beacons.requestWhenInUseAuthorization();
-          Beacons.startRangingBeaconsInRegion({
-            identifier: 'REGION1',
-            uuid: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0',
+    // Only run trilateration logic after map is loaded
+    if (!mapLoaded) return;
+
+    // Simulate beacon distances in meters for trilateration
+    const b1 = { ...BEACON_LOCATIONS.beacon1, d: 6 };
+    const b2 = { ...BEACON_LOCATIONS.beacon2, d: 7 };
+    const b3 = { ...BEACON_LOCATIONS.beacon3, d: 5 };
+
+    const pos = trilaterate(b1, b2, b3);
+    if (pos) {
+      // Successfully estimated position from trilateration
+      setPosition(pos);
+      console.log(`Trilaterated Position: x=${pos.x.toFixed(2)}, y=${pos.y.toFixed(2)}`);
+
+      // Ensure mapView exists before using it
+      if (!mapView.current) return;
+
+      // Enable BlueDot after position calculation
+      mapView.current.BlueDot.enable({ smoothing: false, showBearing: true });
+
+      // Convert the estimated position to lat/lng and override the user location
+      const coords = convertToLatLng(pos.x, pos.y);
+      console.log(coords) ;
+      mapView.current.overrideLocation({
+        timestamp: Date.now(),
+        coords: {
+          ...coords,
+          accuracy: 1,
+          floorLevel: 0,
+        },
+      });
+
+      // Add floor markers for each beacon using `createCoordinate` and `createMarker`
+      Object.entries(BEACON_LOCATIONS).forEach(([id, { x, y }]) => {
+        const { latitude, longitude } = convertToLatLng(x, y);
+          console.log(id);
+
+        // Create a coordinate using `createCoordinate`
+        const coordinate = mapView.current?.currentMap.createCoordinate(latitude, longitude);
+
+        if (coordinate) {
+          // Add a marker for each beacon using `createMarker`
+          mapView.current?.createMarker(coordinate, `<div style="${styles.beacon}">${id}</div>`, {
+            anchor: 'center',  // Anchor the marker at the center
+            rank: 'always-visible',  // Ensure marker is always visible
           });
         }
-
-        DeviceEventEmitter.addListener('beaconsDidRange', (data) => {
-          const beacons = data.beacons
-            .filter((b) => b.accuracy > 0 && b.rssi < 0)
-            .map((b) => {
-              const key = `${b.uuid.toUpperCase()}:${b.major}:${b.minor}`;
-              const loc = BEACON_LOCATIONS[key];
-              return loc ? { ...loc, d: b.accuracy } : null;
-            })
-            .filter(Boolean);
-
-          if (beacons.length >= 3) {
-            // Use only first 3 for trilateration
-            const pos = trilaterate(beacons[0], beacons[1], beacons[2]);
-            if (pos) {
-              setPosition(pos);
-              logMessage(`Trilaterated position: x=${pos.x.toFixed(2)}, y=${pos.y.toFixed(2)}`);
-
-              // Enable BlueDot if not enabled yet
-              mapView.current?.BlueDot.enable({ smoothing: false, showBearing: true });
-
-              // Override the blue dot location on the Mappedin map
-              mapView.current?.overrideLocation({
-                timestamp: Date.now(),
-                coords: {
-                  latitude: 43.6532 + pos.y * 0.00001, // Adjust this scaling to your map's real lat/lng scale
-                  longitude: -79.3832 + pos.x * 0.00001,
-                  accuracy: 1,
-                  floorLevel: 0,
-                },
-              });
-            }
-          }
-        });
-      } catch (err) {
-        logMessage(`Error initializing beacons: ${err}`);
-      }
-    };
-
-    startBeaconScan();
-
-    return () => {
-      Beacons.stopRangingBeaconsInRegion('REGION1');
-      DeviceEventEmitter.removeAllListeners('beaconsDidRange');
-    };
-  }, []);
+      });
+    }
+  }, [mapLoaded]); // Only run the logic when map is loaded
 
   return (
     <SafeAreaView style={styles.fullView}>
@@ -122,15 +108,17 @@ const BlueDotWithBeacon = () => {
         ref={mapView}
         options={venueOptions}
         onFirstMapLoaded={() => {
-          mapView.current?.BlueDot.enable({ smoothing: false, showBearing: true });
+          // Map is loaded, enable BlueDot and trigger marker logic
+          setMapLoaded(true); // Set mapLoaded to true to trigger useEffect
+          if (mapView.current) {
+            mapView.current?.BlueDot.enable({ smoothing: false, showBearing: true ,accuracy:50});
+          }
         }}
       />
       {position && (
         <View style={styles.positionOverlay}>
-          <Text>Estimated Position:</Text>
-          <Text>
-            X: {position.x.toFixed(2)}, Y: {position.y.toFixed(2)}
-          </Text>
+          <Text style={{ fontWeight: 'bold' }}>Estimated Position:</Text>
+          <Text>X: {position.x.toFixed(2)} meters, Y: {position.y.toFixed(2)} meters</Text>
         </View>
       )}
     </SafeAreaView>
@@ -144,6 +132,10 @@ const styles = StyleSheet.create({
   mapView: {
     flex: 1,
   },
+  beacon: {
+    backgroundColor: 'red',
+    color: 'green',
+  },
   positionOverlay: {
     position: 'absolute',
     bottom: 20,
@@ -151,6 +143,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     padding: 10,
     borderRadius: 8,
+    elevation: 5,
   },
 });
 
