@@ -20,6 +20,7 @@
     "react-native": "0.79.2",
     "react-native-beacons-manager": "^1.0.7",
     "react-native-fs": "^2.20.0",
+    "react-native-permissions": "^5.4.1",
     "react-native-webview": "^11.26.1"
   },
   "devDependencies": {
