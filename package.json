@@ -16,6 +16,7 @@
     "expo-dev-client": "~5.1.8",
     "expo-file-system": "~18.1.10",
     "expo-status-bar": "~2.2.3",
+    "geolib": "^3.3.4",
     "react": "19.0.0",
     "react-native": "0.79.2",
     "react-native-beacons-manager": "^1.0.7",

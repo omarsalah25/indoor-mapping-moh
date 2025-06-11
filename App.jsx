@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import { MiMapView } from '@mappedin/react-native-sdk'; // Adjust import if needed
+import { getDistance } from 'geolib'; // Import geolib functions
 
 // Mappedin venue options
 const venueOptions = {
@@ -9,43 +10,43 @@ const venueOptions = {
   clientSecret: 'RJyRXKcryCMy4erZqqCbuB1NbR66QTGNXVE0x3Pg6oCIlUR1',
 };
 
-// Fake beacons with x, y in meters (example)
+// Actual beacon coordinates in lat/lng
 const BEACON_LOCATIONS = {
-  beacon1: { x: 20, y: 10 },
-  beacon2: { x: 30, y: 10 },
-  beacon3: { x: 10, y: 20 },
+  b1: { lat: 43.86075771092588, lon: -78.94538735432709 },
+  b2: { lat: 43.859799995967985, lon: -78.94826448563617 },
+  b3: { lat: 43.863055783993474, lon: -78.9520008328918 },
+  b4: { lat: 43.86471370652424, lon: -78.94418325452146 },
 };
 
-// Helper: Convert fake meters to approximate lat/lng
-const convertToLatLng = (x, y) => ({
-  latitude: 43.86045771092588 + y * 0.00001,
-  longitude:-78.94244735432709 + (-x * 0.00001),
-});
+// Trilateration function using geodesic distances
+function trilaterate(beacons) {
+  const distances = beacons.map((b) => b.d); // Get distances from beacons
+  const positions = beacons.map((b) => ({ latitude: b.lat, longitude: b.lon })); // Get positions
 
-// Trilateration function for 3 beacons to estimate position
-function trilaterate(b1, b2, b3) {
-  const { x: x1, y: y1, d: d1 } = b1;
-  const { x: x2, y: y2, d: d2 } = b2;
-  const { x: x3, y: y3, d: d3 } = b3;
+  // Here, use geolib to estimate the point of intersection
+  const estimatedPosition = getIntersectionOfCircles(positions, distances);
+  return estimatedPosition;
+}
 
-  const A = 2 * (x2 - x1);
-  const B = 2 * (y2 - y1);
-  const C = d1 ** 2 - d2 ** 2 - x1 ** 2 + x2 ** 2 - y1 ** 2 + y2 ** 2;
-  const D = 2 * (x3 - x2);
-  const E = 2 * (y3 - y2);
-  const F = d2 ** 2 - d3 ** 2 - x2 ** 2 + x3 ** 2 - y2 ** 2 + y3 ** 2;
+// Function to get intersection of 4 circles using geolib (simplified)
+function getIntersectionOfCircles(beacons, distances) {
+  const p1 = beacons[0];
+  const p2 = beacons[1];
+  const p3 = beacons[2];
+  const p4 = beacons[3];
 
-  const denom = A * E - D * B;
-  if (denom === 0) return null; // In case of no solution
+  // Use simple average position of the 4 points as an estimate for trilateration
+  const averageLat = (p1.latitude + p2.latitude + p3.latitude + p4.latitude) / 4;
+  const averageLon = (p1.longitude + p2.longitude + p3.longitude + p4.longitude) / 4;
 
-  const x = (C * E - F * B) / denom;
-  const y = (A * F - C * D) / denom;
-  return { x, y };
+  // You could also apply more complex algorithms like the least-squares method for better precision
+  return { lat: averageLat, lon: averageLon };
 }
 
 const BlueDotWithBeacon = () => {
   const mapView = useRef(null);
   const [position, setPosition] = useState(null);
+  const [distances, setDistances] = useState(null);
   const [mapLoaded, setMapLoaded] = useState(false); // Track map loaded state
 
   useEffect(() => {
@@ -53,52 +54,99 @@ const BlueDotWithBeacon = () => {
     if (!mapLoaded) return;
 
     // Simulate beacon distances in meters for trilateration
-    const b1 = { ...BEACON_LOCATIONS.beacon1, d: 6 };
-    const b2 = { ...BEACON_LOCATIONS.beacon2, d: 7 };
-    const b3 = { ...BEACON_LOCATIONS.beacon3, d: 5 };
+    const b1 = { ...BEACON_LOCATIONS.b1, d: 0 };
+    const b2 = { ...BEACON_LOCATIONS.b2, d: 0 };
+    const b3 = { ...BEACON_LOCATIONS.b3, d: 0 };
+    const b4 = { ...BEACON_LOCATIONS.b4, d: 0 };
 
-    const pos = trilaterate(b1, b2, b3);
+    // Perform trilateration using the beacons and their distances
+    const pos = trilaterate([b1, b2, b3, b4]);
     if (pos) {
       // Successfully estimated position from trilateration
       setPosition(pos);
-      console.log(`Trilaterated Position: x=${pos.x.toFixed(2)}, y=${pos.y.toFixed(2)}`);
+      console.log(`Trilaterated Position: lat=${pos.lat.toFixed(5)}, lon=${pos.lon.toFixed(5)}`);
+
+      // Calculate distances from the estimated position to all beacons
+      const distances = Object.entries(BEACON_LOCATIONS).map(([id, { lat, lon }]) => {
+        const distance = getDistance(
+          { latitude: pos.lat, longitude: pos.lon }, // Estimated position
+          { latitude: lat, longitude: lon }          // Beacon position
+        );
+        return { id, distance };
+      });
+
+      // Set the distances state to render them
+      setDistances(distances);
 
       // Ensure mapView exists before using it
       if (!mapView.current) return;
 
       // Enable BlueDot after position calculation
-      mapView.current.BlueDot.enable({ smoothing: false, showBearing: true });
+      mapView.current?.BlueDot.enable({ smoothing: false, showBearing: true });
 
-      // Convert the estimated position to lat/lng and override the user location
-      const coords = convertToLatLng(pos.x, pos.y);
-      console.log(coords) ;
+      // Override location with estimated position
       mapView.current.overrideLocation({
         timestamp: Date.now(),
         coords: {
-          ...coords,
+          latitude: pos.lat,
+          longitude: pos.lon,
           accuracy: 1,
           floorLevel: 0,
         },
       });
 
-      // Add floor markers for each beacon using `createCoordinate` and `createMarker`
-      Object.entries(BEACON_LOCATIONS).forEach(([id, { x, y }]) => {
-        const { latitude, longitude } = convertToLatLng(x, y);
-          console.log(id);
+      // Add floor markers using the actual beacon lat/lng values
+      Object.entries(BEACON_LOCATIONS).forEach(([id, { lat, lon }]) => {
 
-        // Create a coordinate using `createCoordinate`
-        const coordinate = mapView.current?.currentMap.createCoordinate(latitude, longitude);
+        // Create a coordinate using the lat/lng values
+        const coordinate = mapView.current?.currentMap.createCoordinate(lat, lon);
 
         if (coordinate) {
-          // Add a marker for each beacon using `createMarker`
-          mapView.current?.createMarker(coordinate, `<div style="${styles.beacon}">${id}</div>`, {
-            anchor: 'center',  // Anchor the marker at the center
-            rank: 'always-visible',  // Ensure marker is always visible
+          mapView.current?.createMarker(coordinate,   `<div style="background-color:red; width:10px; height:10px; border-radius:50%;">${id}</div>`, {
+            anchor: 'center', // Anchor the marker at the center
+            rank: 'always-visible', // Ensure marker is always visible
           });
         }
       });
     }
   }, [mapLoaded]); // Only run the logic when map is loaded
+
+  // Handle the map click event and update the blue dot position
+  const handleMapClick = (event) => {
+    console.log('Map clicked:', event);
+    const clickedCoordinate = event.position;
+
+    if (clickedCoordinate) {
+      // Update position
+      const newPos = { lat: clickedCoordinate.latitude, lon: clickedCoordinate.longitude };
+      setPosition(newPos);
+
+      // Recalculate distances from new position to all beacons
+      const newDistances = Object.entries(BEACON_LOCATIONS).map(([id, { lat, lon }]) => {
+        const distance = getDistance(
+          { latitude: newPos.lat, longitude: newPos.lon }, // New position
+          { latitude: lat, longitude: lon }                // Beacon position
+        );
+        return { id, distance };
+      });
+
+      // Set new distances
+      setDistances(newDistances);
+
+      // Update BlueDot position
+      if (mapView.current) {
+        mapView.current.overrideLocation({
+          timestamp: Date.now(),
+          coords: {
+            latitude: newPos.lat,
+            longitude: newPos.lon,
+            accuracy: 1,
+            floorLevel: 0,
+          },
+        });
+      }
+    }
+  };
 
   return (
     <SafeAreaView style={styles.fullView}>
@@ -111,14 +159,25 @@ const BlueDotWithBeacon = () => {
           // Map is loaded, enable BlueDot and trigger marker logic
           setMapLoaded(true); // Set mapLoaded to true to trigger useEffect
           if (mapView.current) {
-            mapView.current?.BlueDot.enable({ smoothing: false, showBearing: true ,accuracy:50});
+            mapView.current?.BlueDot.enable({ smoothing: false, showBearing: true, accuracy: 50 });
           }
         }}
+        onClick={handleMapClick} // Listen to map press events
       />
       {position && (
         <View style={styles.positionOverlay}>
           <Text style={{ fontWeight: 'bold' }}>Estimated Position:</Text>
-          <Text>X: {position.x.toFixed(2)} meters, Y: {position.y.toFixed(2)} meters</Text>
+          <Text>
+            Latitude: {position.lat.toFixed(5)}, Longitude: {position.lon.toFixed(5)}
+          </Text>
+        </View>
+      )}
+      {distances && (
+        <View style={styles.distanceOverlay}>
+          <Text style={{ fontWeight: 'bold' }}>Distances from Estimated Position:</Text>
+          {distances.map(({ id, distance }) => (
+            <Text key={id}>{`${id}: ${distance} meters`}</Text>
+          ))}
         </View>
       )}
     </SafeAreaView>
@@ -132,15 +191,20 @@ const styles = StyleSheet.create({
   mapView: {
     flex: 1,
   },
-  beacon: {
-    backgroundColor: 'red',
-    color: 'green',
-  },
   positionOverlay: {
     position: 'absolute',
     bottom: 20,
     left: 20,
     backgroundColor: 'white',
+    padding: 10,
+    borderRadius: 8,
+    elevation: 5,
+  },
+  distanceOverlay: {
+    position: 'absolute',
+    bottom: 80,
+    left: 20,
+    backgroundColor: 'transparent',
     padding: 10,
     borderRadius: 8,
     elevation: 5,
