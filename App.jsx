@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SafeAreaView, StyleSheet, Text, View } from 'react-native';
-import { MiMapView } from '@mappedin/react-native-sdk'; // Adjust import if needed
+import { Mappedin, MappedinLocation, MappedinNode, MiMapView } from '@mappedin/react-native-sdk'; // Adjust import if needed
 import { getDistance } from 'geolib'; // Import geolib functions
 
 // Mappedin venue options
@@ -155,13 +155,111 @@ const BlueDotWithBeacon = () => {
         key="mappedin"
         ref={mapView}
         options={venueOptions}
+
+
+     // Uncomment the following block to find the closest node to "New York Fries" and draw directions
+        //  onFirstMapLoaded={() => {
+        //   // Get all locations from the MapView
+        //   const locations = mapView.current?.venueData?.locations;
+
+        //   // Check if locations are available
+        //   if (locations) {
+        //     // Find the "New York Fries" location
+        //     const nyFriesLocation = locations.find(location => location.name === "New York Fries");
+
+        //     if (nyFriesLocation) {
+        //       const nodes = nyFriesLocation.nodes; // Get nodes for "New York Fries"
+        //       let closestNode = null;
+        //       let minDistance = Infinity;
+
+        //       // Ensure position is available (this should come from your BlueDot or similar)
+        //       const position = { x: 100, y: 200 }; // Replace with actual position from BlueDot
+
+        //       // Calculate distance to each node
+        //       for (const node of nodes) {
+        //         if (node) {  // Use node's
+        //           const dx = node.x - position.x;  // Calculate difference in x coordinates
+        //           const dy = node.y - position.y;  // Calculate difference in y coordinates
+        //           const distance = Math.sqrt(dx * dx + dy * dy);  // Calculate Euclidean distance
+
+        //           // Update the closest node if this one is closer
+        //           if (distance < minDistance) {
+        //             minDistance = distance;
+        //             closestNode = node;
+        //           }
+        //         }
+        //       }
+
+        //       if (closestNode) {
+        //         console.log('Closest Node:', closestNode);
+        //         console.log('Min Distance:', minDistance);
+
+        //         // Now, create a departure node at the current position of the Blue Dot
+        //         // Using a valid MappedinNode structure for the BlueDot position
+        //         const departureNode = {
+        //           x: position.x, y: position.y,  // Correct structure with mapCoordinate
+        //           name: "BlueDot Node",  // Name the node
+        //           id: "blueDotNodeId",   // Unique ID for the new node
+        //         };
+
+        //         // Ensure we have a departure and destination
+        //         if (departureNode && closestNode) {
+        //           // Fetch directions between departure node and closest node
+        //           const directions = mapView.current?.getDirections(departureNode, closestNode);  // Get directions
+
+        //           if (directions) {
+        //             mapView.current?.Journey.draw(directions);  // Draw the directions on the map
+        //           } else {
+        //             console.log('No directions found.');
+        //           }
+        //         }
+        //       } else {
+        //         console.log('No closest node found.');
+        //       }
+        //     } else {
+        //       console.log('New York Fries location not found.');
+        //     }
+        //   } else {
+        //     console.log('Venue data is unavailable.');
+        //   }
+
+        //   // Enable Blue Dot with settings
+        //   if (mapView.current) {
+        //     mapView.current?.BlueDot.enable({ smoothing: false, showBearing: true, accuracy: 50 });
+        //   }
+
+        //   // Set mapLoaded to true to trigger useEffect
+        //   setMapLoaded(true);
+        // }}
+
         onFirstMapLoaded={() => {
-          // Map is loaded, enable BlueDot and trigger marker logic
-          setMapLoaded(true); // Set mapLoaded to true to trigger useEffect
+          console.log(mapView.current.Camera.position);
+          const {lat, lon} = mapView.current.Camera.position;
+          // const departure = mapView.current?.BlueDot.getLocation();
+            const departure = mapView.current?.venueData?.locations.find(
+            (l) => l.name === 'Uniqlo',
+          );
+
+          // console.log('Departure:', departure);
+          const destination = mapView.current?.venueData?.locations.find(
+            (l) => l.name === 'Microsoft',
+          );
+          console.log('Departure:', departure);
+          console.log('Destination:', destination);
+          if (!departure || !destination) {
+            return;
+          }
+          const directions = departure?.directionsTo(destination);
+          if (directions) {
+            mapView.current?.Journey.draw(directions);
+          }
           if (mapView.current) {
             mapView.current?.BlueDot.enable({ smoothing: false, showBearing: true, accuracy: 50 });
           }
+          setMapLoaded(true); // Set mapLoaded to true to trigger useEffect
+
         }}
+      
         onClick={handleMapClick} // Listen to map press events
       />
       {position && (
